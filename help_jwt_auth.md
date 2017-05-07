@@ -46,8 +46,29 @@ touch app/lib/json_web_token.rb
 
 Define the jwt singleton in `app/lib/json_web_token.rb`:
 ```rb
+class JsonWebToken
+  # secret to encode and decode token
+  HMAC_SECRET = Rails.application.secrets.secret_key_base
 
+  def self.encode(payload, exp = 24.hours.from_now)
+    # set expiry to 24 hours from creation time
+    payload[:exp] = exp.to_i
+    # sign token with application secret
+    JWT.encode(payload, HMAC_SECRET)
+  end
+  
+  def self.decode(token)
+    # get payload; first index in decoded Array
+    body = JWT.decode(token, HMAC_SECRET)[0]
+    HashWithIndifferentAccess.new body
 
+    # rescue from expiry exception
+  rescue JWT::ExpiredSignature, JWT::VerificationError => e
+    # raise custom error to be handled by custom handler
+    raise ExceptionHandler::InvalidToken, e.message
+  end
+    
+end
 ```
 This singleton wraps `JWT` to provide token encoding and decoding methods. The encode method will be responsible for creating tokens based on a payload (user id) and expiration period. Since every Rails application has a unique secret key, we'll use that as our secret to sign tokens. The decode method, on the other hand, accepts a token and attempts to decode it using the same secret used in encoding. In the event token decoding fails, be it due to expiration or validation, `JWT` will raise respective exceptions which will be handled in the `Exception Handler` module.
 
@@ -315,6 +336,19 @@ Let's remember that when signing up and authenticating a user we won't need a to
 First the authentication action in `authentication_controller.rb`:
 ```rb
 skip_before_action :authorize_request, only: :authenticate
+
+# return auth token once user is authenticated
+def authenticate
+  auth_token =
+    AuthenticateUser.new(auth_params[:email], auth_params[:password]).call
+  json_response(auth_token: auth_token)
+end
+
+private
+
+def auth_params
+  params.permit(:email, :password)
+end
 ```
 
 Then the user signup action in `users_controller.rb`:
